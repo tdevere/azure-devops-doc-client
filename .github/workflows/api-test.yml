@@ -46,7 +46,7 @@ jobs:
           AZDO_PAT: ${{ secrets.AZDO_PAT }}
           AZDO_ORGANIZATION: ${{ secrets.AZDO_ORGANIZATION }}
         run: |
-          ARGS="--json"
+          ARGS=""
           if [ -n "${{ inputs.pattern }}" ]; then
             ARGS="$ARGS ${{ inputs.pattern }}"
           fi
@@ -54,10 +54,10 @@ jobs:
             ARGS="$ARGS --service ${{ inputs.service }}"
           fi
 
-          # Run and capture output — don't fail the step yet
-          node scripts/test-api.mjs $ARGS > tmp/api-test-results.json 2>&1 || true
+          # Run and let the script write tmp/api-test-results.json automatically
+          node scripts/test-api.mjs $ARGS || true
 
-          # Extract counts
+          # Extract counts from the results file
           PASS=$(jq '.pass // 0' tmp/api-test-results.json)
           FAIL=$(jq '.fail // 0' tmp/api-test-results.json)
           SERVER_ERR=$(jq '.serverError // 0' tmp/api-test-results.json)

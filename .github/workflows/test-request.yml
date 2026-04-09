@@ -57,17 +57,13 @@ jobs:
           VALID_OPS=""
           INVALID_OPS=""
 
-          while IFS= read -r op; do
-            if node -e "
-              import { getOperationById } from './dist/index.js';
-              try { getOperationById('$op'); process.exit(0); }
-              catch { process.exit(1); }
-            " 2>/dev/null; then
+          for op in ${{ steps.parse.outputs.ops }}; do
+            if node -e "import{getOperationById}from'./dist/index.js';getOperationById('$op')" 2>/dev/null; then
               VALID_OPS="$VALID_OPS $op"
             else
               INVALID_OPS="$INVALID_OPS $op"
             fi
-          done <<< "${{ steps.parse.outputs.ops }}"
+          done
 
           VALID_OPS=$(echo "$VALID_OPS" | xargs)
           INVALID_OPS=$(echo "$INVALID_OPS" | xargs)
@@ -82,68 +78,7 @@ jobs:
           BRANCH="test-request/${{ github.event.issue.number }}"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-          # Generate the test file
-          node -e "
-          const ops = '${{ steps.validate.outputs.valid }}'.trim().split(/\s+/);
-          import { getOperationById } from './dist/index.js';
-
-          let code = \`import { describe, expect, it } from 'vitest';
-          import { AzureDevOpsClient, loadAzureDevOpsClientOptionsFromEnv } from '../src/index.js';
-          import type { AzureDevOpsResponse } from '../src/index.js';
-
-          const shouldRun = process.env.RUN_LIVE_AZDO_TESTS === 'true';
-          const testBlock = shouldRun ? describe : describe.skip;
-
-          let client;
-          function getClient() {
-            if (!client) client = new AzureDevOpsClient(loadAzureDevOpsClientOptionsFromEnv());
-            return client;
-          }
-
-          function expectSuccess(response) {
-            expect(response.status).toBeGreaterThanOrEqual(200);
-            expect(response.status).toBeLessThan(300);
-          }
-
-          // Tests requested in issue #${{ github.event.issue.number }}
-          testBlock('issue #${{ github.event.issue.number }}: requested API tests', () => {
-          \`;
-
-          for (const opId of ops) {
-            try {
-              const op = getOperationById(opId);
-              const placeholders = [...new Set(op.requestTemplates.flatMap(t => t.placeholders))];
-              const needsProject = placeholders.includes('project') || placeholders.includes('projectId');
-              const pathObj = {};
-              if (needsProject) pathObj.project = 'DISCOVERED_PROJECT';
-
-              code += \`
-            it('\${opId}', async () => {
-              const response = await getClient().invoke('\${opId}'\${
-                Object.keys(pathObj).length > 0
-                  ? \`, {
-                path: { \${Object.entries(pathObj).map(([k,v]) => k + \": '\" + v + \"'\").join(', ')} },
-                query: { \\$top: 5 },
-              }\`
-                  : ''
-              });
-              expectSuccess(response);
-            });
-          \`;
-            } catch (e) {
-              code += \`  // Skipped \${opId}: not found in catalog\n\`;
-            }
-          }
-
-          code += \`}, 60_000);
-          \`;
-
-          // Write the file
-          import { writeFileSync } from 'node:fs';
-          const filename = 'tests/issue-${{ github.event.issue.number }}.test.ts';
-          writeFileSync(filename, code);
-          console.log('Generated ' + filename + ' with ' + ops.length + ' tests');
-          "
+          node scripts/gen-test.mjs ${{ github.event.issue.number }} ${{ steps.validate.outputs.valid }}
 
       - name: Run the generated tests
         if: steps.validate.outputs.valid != ''
@@ -198,7 +133,7 @@ jobs:
 
           ---
           *Auto-generated from test-request issue*" \
-            --label "automated,test" \
+            --label "automated" \
             --head "$BRANCH"
 
       - name: Comment on issue
