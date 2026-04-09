@@ -36,6 +36,12 @@ jobs:
           name: coverage-report
           path: coverage/
 
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
   smoke:
     runs-on: ubuntu-latest
     needs: validate
@@ -52,7 +58,7 @@ jobs:
 
       - name: Run live smoke tests
         env:
-          RUN_LIVE_AZDO_TESTS: 'true'
+          RUN_LIVE_AZDO_TESTS: "true"
           AZDO_PAT: ${{ secrets.AZDO_PAT }}
           AZDO_ORGANIZATION: ${{ secrets.AZDO_ORGANIZATION }}
         run: npx vitest run tests/integration.smoke.test.ts
