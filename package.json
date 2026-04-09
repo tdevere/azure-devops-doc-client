@@ -1,0 +1,56 @@
+{
+  "name": "azure-devops-doc-client",
+  "version": "0.1.0",
+  "description": "Generated Azure DevOps 7.1 API client built from local documentation inventories.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "catalog:inventory": "node scripts/inventory-pdf.mjs \"rest-api-azure-devops-azure-devops-rest-7.1.pdf\" \"tmp/rest-inventory.json\" services && node scripts/inventory-pdf.mjs \"rest-api-azure-devops-azure-devops-server-rest-7.1.pdf\" \"tmp/server-inventory.json\" server",
+    "catalog:generate": "node scripts/build-catalog.mjs",
+    "catalog:refresh": "npm run catalog:inventory && npm run catalog:generate",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "clean": "node -e \"const fs=require('fs'); for (const path of ['dist','coverage']) fs.rmSync(path,{recursive:true,force:true});\"",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "azure-devops",
+    "api-client",
+    "typescript",
+    "codegen",
+    "azure",
+    "rest-api",
+    "devops"
+  ],
+  "author": "Azure DevOps Doc Client Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tdevere/azure-devops-doc-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tdevere/azure-devops-doc-client/issues"
+  },
+  "homepage": "https://github.com/tdevere/azure-devops-doc-client#readme",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "pdfjs-dist": "^5.6.205",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
