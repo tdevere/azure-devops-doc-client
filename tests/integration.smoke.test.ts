@@ -18,9 +18,9 @@ testBlock('live smoke', () => {
     expect(response.status).toBeLessThan(300);
   });
 
-  it('lists processes via namespace API', async () => {
+  it('lists processes via invoke API', async () => {
     const client = new AzureDevOpsClient(loadAzureDevOpsClientOptionsFromEnv());
-    const response = await client.services.core.processes.list();
+    const response = await client.invoke('services.core.processes.list');
 
     expect(response.status).toBeGreaterThanOrEqual(200);
     expect(response.status).toBeLessThan(300);
