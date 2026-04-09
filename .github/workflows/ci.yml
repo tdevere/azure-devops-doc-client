@@ -23,8 +23,6 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run catalog:generate
-
       - run: npm run typecheck
 
       - run: npm test
