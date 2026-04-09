@@ -86,4 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run api-test.yml
+          # GITHUB_TOKEN can't dispatch workflows, use repository_dispatch instead
+          gh api repos/${{ github.repository }}/dispatches \
+            --method POST \
+            --field event_type=retest-api

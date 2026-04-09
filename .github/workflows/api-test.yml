@@ -17,6 +17,10 @@ on:
         type: boolean
         default: false
 
+  # Triggered by fix-failures workflow after classifying errors
+  repository_dispatch:
+    types: [retest-api]
+
   # Run weekly for regression detection
   schedule:
     - cron: "0 6 * * 1" # Monday 6 AM UTC
