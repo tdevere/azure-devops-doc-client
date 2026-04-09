@@ -8,16 +8,14 @@
 
 <!-- STATUS:START -->
 <!-- This section is auto-updated by CI after smoke tests pass. Do not edit manually. -->
-
-| Metric                   | Value                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| **Latest Release**       | _unreleased_                                                                                    |
-| **Live API Tests**       | ![Smoke](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/ci.yml/badge.svg) |
-| **Unit Tests**           | 20                                                                                              |
-| **Integration Tests**    | 22                                                                                              |
-| **Operations Cataloged** | 2,004                                                                                           |
-| **Last Updated**         | —                                                                                               |
-
+| Metric | Value |
+|--------|-------|
+| **Latest Release** | *unreleased* |
+| **Live API Tests** | 22 passed ✅ |
+| **Unit Tests** | 20 |
+| **Integration Tests** | 22 |
+| **Operations Cataloged** | 2004 |
+| **Last Updated** | 2026-04-09 02:25 UTC |
 <!-- STATUS:END -->
 
 A generated Azure DevOps REST client built from the official 7.1 documentation PDFs. Covers both **Azure DevOps Services** and **Azure DevOps Server** with 2,000+ operations, shared auth, retries, error handling, and a fully typed namespace API.
