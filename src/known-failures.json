@@ -1,1 +1,68 @@
-{}
+{
+  "services.approvals-and-checks.check-configurations.list": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: resourceType, resourceId, $expand",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.artifacts.feed-recycle-bin.list": {
+    "reason": "server-error",
+    "detail": "Server returned 5xx — not a client issue",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.build.builds.get-changes-between-builds": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: fromBuildId, toBuildId, $top",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.build.leases.get-retention-leases-by-owner-id": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: ownerId, definitionId, runId",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.core.projects.get-project-properties": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: keys",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.git.diffs.get": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: diffCommonCommit, $top, $skip, baseVersion, baseVersionOptions, baseVersionType, targetVersion, targetVersionOptions, targetVersionType",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.git.items.list": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: scopePath, recursionLevel, includeContentMetadata, latestProcessedChange, download, includeLinks, $format, versionDescriptor.version, versionDescriptor.versionOptions, versionDescriptor.versionType, zipForUnix",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.git.refs-favorites.list": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: identityId",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.git.stats.list": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: baseVersionDescriptor.version, baseVersionDescriptor.versionOptions, baseVersionDescriptor.versionType",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.identities.identities.read-identities": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: descriptors, identityIds, subjectDescriptors, searchFilter, filterValue, queryMembership",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  },
+  "services.tfvc.items.list": {
+    "reason": "needs-resource-id",
+    "detail": "Requires: scopePath, recursionLevel, includeLinks, versionDescriptor.version, versionDescriptor.versionOption, versionDescriptor.versionType",
+    "httpStatus": null,
+    "firstSeen": "2026-04-09"
+  }
+}
