@@ -53,6 +53,7 @@ jobs:
 
           git add src/known-failures.json
           git commit -m "fix: classify ${{ steps.triage.outputs.added }} API failures from issue #${{ github.event.issue.number }}"
+          git pull --rebase origin master
           git push origin master
 
       - name: Comment on issue

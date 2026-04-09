@@ -121,6 +121,7 @@ jobs:
 
           git add "tests/issue-${{ steps.parse.outputs.issue_num }}.test.ts"
           git commit -m "test: add API tests for batch ${{ steps.parse.outputs.issue_num }}"
+          git pull --rebase origin master
           git push origin master
 
       - name: Comment on issue and close
