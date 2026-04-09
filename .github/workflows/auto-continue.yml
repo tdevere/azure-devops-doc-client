@@ -1,75 +1,85 @@
 name: auto-continue
 
+# Scheduled watchdog: restarts the test-generation chain if it stopped
+# and there is still work to do.  Skips entirely when:
+#   - the chain is already running (an in_progress test-request run exists)
+#   - every operation is already covered
 on:
-  pull_request:
-    types: [closed]
+  schedule:
+    # Every 6 hours — 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # manual trigger for testing
 
 permissions:
   contents: read
-  issues: write
+  actions: read
 
 jobs:
-  next-batch:
+  watchdog:
     runs-on: ubuntu-latest
-    if: >
-      github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.labels.*.name, 'automated')
     steps:
+      - name: Check for in-progress chain
+        id: chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Look for any in_progress or queued test-request runs
+          ACTIVE=$(gh run list --workflow test-request --limit 5 \
+            --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+
+          echo "active=$ACTIVE" >> "$GITHUB_OUTPUT"
+          if [ "$ACTIVE" -gt 0 ]; then
+            echo "Chain is already running ($ACTIVE active runs) — nothing to do."
+          else
+            echo "No active chain detected."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.chain.outputs.active == '0'
 
       - uses: actions/setup-node@v4
+        if: steps.chain.outputs.active == '0'
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
+        if: steps.chain.outputs.active == '0'
 
       - run: npm run build
+        if: steps.chain.outputs.active == '0'
 
-      - name: Check if there are untested operations
-        id: check
+      - name: Check remaining work
+        if: steps.chain.outputs.active == '0'
+        id: remaining
         run: |
           mkdir -p tmp
-          OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null)
-          COUNT=$(echo "$OPS" | grep -c '^services\.' || true)
+          OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null | tr '\n' ' ' | xargs)
+          COUNT=$(echo "$OPS" | wc -w)
 
-          if [ "$COUNT" -eq 0 ]; then
-            echo "remaining=0" >> "$GITHUB_OUTPUT"
-            echo "No more untested operations — full coverage achieved!"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "ops=$OPS" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ] || [ -z "$OPS" ]; then
+            echo "All operations covered — nothing to dispatch."
           else
-            echo "remaining=$COUNT" >> "$GITHUB_OUTPUT"
-            # Save for the next step
-            echo "$OPS" | tr '\n' ' ' | xargs > tmp/next-ops.txt
+            echo "Found $COUNT untested operations to dispatch."
           fi
 
-      - name: File next test-request issue
-        if: steps.check.outputs.remaining != '0'
+      - name: Dispatch batch
+        if: steps.chain.outputs.active == '0' && steps.remaining.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          OPS=$(cat tmp/next-ops.txt)
-          COUNT=${{ steps.check.outputs.remaining }}
+          # Determine next batch number from latest dispatch run title
+          LAST=$(gh run list --workflow test-request --limit 1 \
+            --json displayTitle --jq '.[0].displayTitle // ""')
+          NUM=$(echo "$LAST" | grep -oP 'dispatch-\K\d+' || echo "0")
+          BATCH=$((NUM + 1))
 
-          # Build the ops list for the issue body
-          OPS_LIST=$(echo "$OPS" | tr ' ' '\n' | sed '/^$/d' | sed 's/^/- `/' | sed 's/$/`/')
-
-          # Determine batch number from existing test-request issues
-          BATCH=$(gh issue list --label "test-request" --state all --json number --jq 'length + 1')
-
-          BODY="## Test Request — Batch $BATCH (auto-continued)
-
-          Continuing automated coverage expansion after merging PR #${{ github.event.pull_request.number }}.
-
-          ### Operations to test
-
-          $OPS_LIST
-
-          ### Context
-          - Auto-filed by the auto-continue workflow
-          - $COUNT operations selected from least-covered services
-          "
-
-          gh issue create \
-            --title "Test Request: Batch $BATCH — Auto-Continue ($COUNT ops)" \
-            --body "$BODY" \
-            --label "test-request"
+          echo "Dispatching batch $BATCH with ${{ steps.remaining.outputs.count }} ops..."
+          gh api repos/${{ github.repository }}/dispatches \
+            --method POST \
+            --field event_type=run-test-batch \
+            -f client_payload[ops]="${{ steps.remaining.outputs.ops }}" \
+            -f client_payload[batch]="$BATCH"
