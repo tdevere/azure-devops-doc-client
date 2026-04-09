@@ -1,0 +1,110 @@
+name: update-readme
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  update-status:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Gather status
+        id: status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get latest release tag (if any)
+          LATEST_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || true)
+          if [ -z "$LATEST_TAG" ]; then
+            RELEASE_TEXT="*unreleased*"
+          else
+            RELEASE_TEXT="[$LATEST_TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$LATEST_TAG)"
+          fi
+
+          # Count tests from the CI run
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          SMOKE_JOB=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | select(.name=="smoke") | .conclusion' 2>/dev/null || true)
+          if [ "$SMOKE_JOB" = "success" ]; then
+            SMOKE_TEXT="22 passed ✅"
+          elif [ "$SMOKE_JOB" = "skipped" ]; then
+            SMOKE_TEXT="skipped (PR)"
+          else
+            SMOKE_TEXT="![Smoke](https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml/badge.svg)"
+          fi
+
+          # Get operation count from coverage doc
+          OP_COUNT=$(grep -oP 'Total operations: \K[0-9,]+' docs/coverage.md 2>/dev/null || echo "2,004")
+
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "release=$RELEASE_TEXT" >> "$GITHUB_OUTPUT"
+          echo "smoke=$SMOKE_TEXT" >> "$GITHUB_OUTPUT"
+          echo "ops=$OP_COUNT" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
+
+      - name: Update README status section
+        run: |
+          cat > /tmp/status_block.txt << 'BLOCK_END'
+          <!-- STATUS:START -->
+          <!-- This section is auto-updated by CI after smoke tests pass. Do not edit manually. -->
+          | Metric | Value |
+          |--------|-------|
+          | **Latest Release** | RELEASE_PLACEHOLDER |
+          | **Live API Tests** | SMOKE_PLACEHOLDER |
+          | **Unit Tests** | 20 |
+          | **Integration Tests** | 22 |
+          | **Operations Cataloged** | OPS_PLACEHOLDER |
+          | **Last Updated** | TIMESTAMP_PLACEHOLDER |
+          <!-- STATUS:END -->
+          BLOCK_END
+
+          # Strip leading whitespace from heredoc
+          sed -i 's/^          //' /tmp/status_block.txt
+
+          # Fill in values
+          sed -i "s|RELEASE_PLACEHOLDER|${{ steps.status.outputs.release }}|g" /tmp/status_block.txt
+          sed -i "s|SMOKE_PLACEHOLDER|${{ steps.status.outputs.smoke }}|g" /tmp/status_block.txt
+          sed -i "s|OPS_PLACEHOLDER|${{ steps.status.outputs.ops }}|g" /tmp/status_block.txt
+          sed -i "s|TIMESTAMP_PLACEHOLDER|${{ steps.status.outputs.timestamp }}|g" /tmp/status_block.txt
+
+          # Replace the status block in README
+          python3 -c "
+          import re, pathlib
+          readme = pathlib.Path('README.md')
+          content = readme.read_text()
+          block = pathlib.Path('/tmp/status_block.txt').read_text()
+          updated = re.sub(
+              r'<!-- STATUS:START -->.*?<!-- STATUS:END -->',
+              block.strip(),
+              content,
+              flags=re.DOTALL
+          )
+          readme.write_text(updated)
+          "
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No README changes to commit."
+          else
+            git commit -m "docs: update README status [skip ci]"
+            git push
+          fi

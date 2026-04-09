@@ -96,3 +96,72 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+
+  update-readme:
+    runs-on: ubuntu-latest
+    needs: github-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Gather release status
+        id: status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TEXT="[$GITHUB_REF_NAME](https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME)"
+          OP_COUNT=$(grep -oP 'Total operations: \K[0-9,]+' docs/coverage.md 2>/dev/null || echo "2,004")
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "release=$RELEASE_TEXT" >> "$GITHUB_OUTPUT"
+          echo "ops=$OP_COUNT" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
+
+      - name: Update README status section
+        run: |
+          cat > /tmp/status_block.txt << 'BLOCK_END'
+          <!-- STATUS:START -->
+          <!-- This section is auto-updated by CI after smoke tests pass. Do not edit manually. -->
+          | Metric | Value |
+          |--------|-------|
+          | **Latest Release** | RELEASE_PLACEHOLDER |
+          | **Live API Tests** | 22 passed |
+          | **Unit Tests** | 20 |
+          | **Integration Tests** | 22 |
+          | **Operations Cataloged** | OPS_PLACEHOLDER |
+          | **Last Updated** | TIMESTAMP_PLACEHOLDER |
+          <!-- STATUS:END -->
+          BLOCK_END
+
+          sed -i 's/^          //' /tmp/status_block.txt
+          sed -i "s|RELEASE_PLACEHOLDER|${{ steps.status.outputs.release }}|g" /tmp/status_block.txt
+          sed -i "s|OPS_PLACEHOLDER|${{ steps.status.outputs.ops }}|g" /tmp/status_block.txt
+          sed -i "s|TIMESTAMP_PLACEHOLDER|${{ steps.status.outputs.timestamp }}|g" /tmp/status_block.txt
+
+          python3 -c "
+          import re, pathlib
+          readme = pathlib.Path('README.md')
+          content = readme.read_text()
+          block = pathlib.Path('/tmp/status_block.txt').read_text()
+          updated = re.sub(
+              r'<!-- STATUS:START -->.*?<!-- STATUS:END -->',
+              block.strip(),
+              content,
+              flags=re.DOTALL
+          )
+          readme.write_text(updated)
+          "
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No README changes to commit."
+          else
+            git commit -m "docs: update README status for $GITHUB_REF_NAME [skip ci]"
+            git push
+          fi

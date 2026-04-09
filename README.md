@@ -1,8 +1,22 @@
 # Azure DevOps Doc Client
 
 [![CI](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/ci.yml/badge.svg)](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/ci.yml)
+[![Release](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/release.yml/badge.svg)](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/release.yml)
+[![npm version](https://img.shields.io/npm/v/azure-devops-doc-client.svg)](https://www.npmjs.com/package/azure-devops-doc-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
+
+<!-- STATUS:START -->
+<!-- This section is auto-updated by CI after smoke tests pass. Do not edit manually. -->
+| Metric | Value |
+|--------|-------|
+| **Latest Release** | *unreleased* |
+| **Live API Tests** | ![Smoke](https://github.com/tdevere/azure-devops-doc-client/actions/workflows/ci.yml/badge.svg) |
+| **Unit Tests** | 20 |
+| **Integration Tests** | 22 |
+| **Operations Cataloged** | 2,004 |
+| **Last Updated** | — |
+<!-- STATUS:END -->
 
 A generated Azure DevOps REST client built from the official 7.1 documentation PDFs. Covers both **Azure DevOps Services** and **Azure DevOps Server** with 2,000+ operations, shared auth, retries, error handling, and a fully typed namespace API.
 
