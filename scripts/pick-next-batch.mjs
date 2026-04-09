@@ -76,18 +76,24 @@ const svcPriority = Object.entries(svcStats)
   .map(s => s.svc);
 
 // ---------------------------------------------------------------------------
-// Pick operations: lowest-coverage services first, GET only
+// Pick operations: lowest-coverage services first, all methods
 // ---------------------------------------------------------------------------
 const picks = [];
 
+// Method priority: GET/HEAD first (read-only), then POST/PATCH/PUT, DELETE last
+const methodPriority = { GET: 0, HEAD: 0, POST: 1, PATCH: 1, PUT: 1, DELETE: 2 };
+
 for (const svc of svcPriority) {
   if (picks.length >= count) break;
-  for (const op of ops) {
+  const svcOps = ops
+    .filter(op => op.serviceKey === svc && !covered.has(op.id))
+    .sort((a, b) => {
+      const ma = a.requestTemplates?.[0]?.method ?? 'POST';
+      const mb = b.requestTemplates?.[0]?.method ?? 'POST';
+      return (methodPriority[ma] ?? 1) - (methodPriority[mb] ?? 1);
+    });
+  for (const op of svcOps) {
     if (picks.length >= count) break;
-    if (op.serviceKey !== svc) continue;
-    if (covered.has(op.id)) continue;
-    const isGet = op.requestTemplates?.some(t => t.method === 'GET');
-    if (!isGet) continue;
     picks.push(op.id);
   }
 }
