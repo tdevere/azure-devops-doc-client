@@ -30,6 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p tmp
           node scripts/triage-failures.mjs --issue ${{ github.event.issue.number }} | tee tmp/triage-output.txt
 
           # Check if known-failures.json was actually updated

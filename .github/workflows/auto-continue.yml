@@ -29,6 +29,7 @@ jobs:
       - name: Check if there are untested operations
         id: check
         run: |
+          mkdir -p tmp
           OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null)
           COUNT=$(echo "$OPS" | grep -c '^services\.' || true)
 
