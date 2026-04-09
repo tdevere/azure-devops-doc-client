@@ -21,6 +21,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:api": "node scripts/test-api.mjs",
+    "test:coverage-report": "node scripts/api-coverage.mjs",
     "clean": "node -e \"const fs=require('fs'); for (const path of ['dist','coverage']) fs.rmSync(path,{recursive:true,force:true});\"",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },

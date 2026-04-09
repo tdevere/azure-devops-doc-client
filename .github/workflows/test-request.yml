@@ -1,0 +1,222 @@
+name: test-request
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  generate-test:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'test-request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Parse issue for operation IDs
+        id: parse
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Extract operation IDs from issue title and body.
+          # Matches patterns like: services.git.repositories.list, services.core.projects.list
+          ALL_TEXT="$ISSUE_TITLE $ISSUE_BODY"
+          OPS=$(echo "$ALL_TEXT" | grep -oP '(services|server)\.[a-z0-9._-]+\.[a-z0-9._-]+\.[a-z0-9._-]+' | sort -u)
+
+          if [ -z "$OPS" ]; then
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "⚠️ Could not find any operation IDs in this issue. Please include operation IDs like \`services.git.repositories.list\` in the issue body."
+            exit 0
+          fi
+
+          echo "ops<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$OPS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          COUNT=$(echo "$OPS" | wc -l)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Validate operations exist in catalog
+        if: steps.parse.outputs.ops != ''
+        id: validate
+        run: |
+          VALID_OPS=""
+          INVALID_OPS=""
+
+          while IFS= read -r op; do
+            if node -e "
+              import { getOperationById } from './dist/index.js';
+              try { getOperationById('$op'); process.exit(0); }
+              catch { process.exit(1); }
+            " 2>/dev/null; then
+              VALID_OPS="$VALID_OPS $op"
+            else
+              INVALID_OPS="$INVALID_OPS $op"
+            fi
+          done <<< "${{ steps.parse.outputs.ops }}"
+
+          VALID_OPS=$(echo "$VALID_OPS" | xargs)
+          INVALID_OPS=$(echo "$INVALID_OPS" | xargs)
+
+          echo "valid=$VALID_OPS" >> "$GITHUB_OUTPUT"
+          echo "invalid=$INVALID_OPS" >> "$GITHUB_OUTPUT"
+
+      - name: Generate test code
+        if: steps.validate.outputs.valid != ''
+        id: generate
+        run: |
+          BRANCH="test-request/${{ github.event.issue.number }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          # Generate the test file
+          node -e "
+          const ops = '${{ steps.validate.outputs.valid }}'.trim().split(/\s+/);
+          import { getOperationById } from './dist/index.js';
+
+          let code = \`import { describe, expect, it } from 'vitest';
+          import { AzureDevOpsClient, loadAzureDevOpsClientOptionsFromEnv } from '../src/index.js';
+          import type { AzureDevOpsResponse } from '../src/index.js';
+
+          const shouldRun = process.env.RUN_LIVE_AZDO_TESTS === 'true';
+          const testBlock = shouldRun ? describe : describe.skip;
+
+          let client;
+          function getClient() {
+            if (!client) client = new AzureDevOpsClient(loadAzureDevOpsClientOptionsFromEnv());
+            return client;
+          }
+
+          function expectSuccess(response) {
+            expect(response.status).toBeGreaterThanOrEqual(200);
+            expect(response.status).toBeLessThan(300);
+          }
+
+          // Tests requested in issue #${{ github.event.issue.number }}
+          testBlock('issue #${{ github.event.issue.number }}: requested API tests', () => {
+          \`;
+
+          for (const opId of ops) {
+            try {
+              const op = getOperationById(opId);
+              const placeholders = [...new Set(op.requestTemplates.flatMap(t => t.placeholders))];
+              const needsProject = placeholders.includes('project') || placeholders.includes('projectId');
+              const pathObj = {};
+              if (needsProject) pathObj.project = 'DISCOVERED_PROJECT';
+
+              code += \`
+            it('\${opId}', async () => {
+              const response = await getClient().invoke('\${opId}'\${
+                Object.keys(pathObj).length > 0
+                  ? \`, {
+                path: { \${Object.entries(pathObj).map(([k,v]) => k + \": '\" + v + \"'\").join(', ')} },
+                query: { \\$top: 5 },
+              }\`
+                  : ''
+              });
+              expectSuccess(response);
+            });
+          \`;
+            } catch (e) {
+              code += \`  // Skipped \${opId}: not found in catalog\n\`;
+            }
+          }
+
+          code += \`}, 60_000);
+          \`;
+
+          // Write the file
+          import { writeFileSync } from 'node:fs';
+          const filename = 'tests/issue-${{ github.event.issue.number }}.test.ts';
+          writeFileSync(filename, code);
+          console.log('Generated ' + filename + ' with ' + ops.length + ' tests');
+          "
+
+      - name: Run the generated tests
+        if: steps.validate.outputs.valid != ''
+        id: run_tests
+        env:
+          RUN_LIVE_AZDO_TESTS: "true"
+          AZDO_PAT: ${{ secrets.AZDO_PAT }}
+          AZDO_ORGANIZATION: ${{ secrets.AZDO_ORGANIZATION }}
+        run: |
+          npx vitest run "tests/issue-${{ github.event.issue.number }}.test.ts" --reporter=verbose 2>&1 | tee tmp/test-output.txt || true
+          if grep -q "Tests.*passed" tmp/test-output.txt; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR
+        if: steps.validate.outputs.valid != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="test-request/${{ github.event.issue.number }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add "tests/issue-${{ github.event.issue.number }}.test.ts"
+          git commit -m "test: add API tests for issue #${{ github.event.issue.number }}"
+          git push origin "$BRANCH"
+
+          RESULT="${{ steps.run_tests.outputs.result }}"
+          if [ "$RESULT" = "pass" ]; then
+            STATUS_LINE="✅ All tests passed against the live API."
+          else
+            STATUS_LINE="⚠️ Some tests failed — see workflow run for details."
+          fi
+
+          gh pr create \
+            --title "test: API tests for issue #${{ github.event.issue.number }}" \
+            --body "## Generated API Tests
+
+          Closes #${{ github.event.issue.number }}
+
+          $STATUS_LINE
+
+          ### Operations tested
+          $(echo '${{ steps.validate.outputs.valid }}' | tr ' ' '\n' | sed 's/^/- `/' | sed 's/$/`/')
+
+          $([ -n '${{ steps.validate.outputs.invalid }}' ] && echo '### Not found in catalog' && echo '${{ steps.validate.outputs.invalid }}' | tr ' ' '\n' | sed 's/^/- `/' | sed 's/$/`/')
+
+          ### Workflow Run
+          [View Run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+
+          ---
+          *Auto-generated from test-request issue*" \
+            --label "automated,test" \
+            --head "$BRANCH"
+
+      - name: Comment on issue
+        if: steps.validate.outputs.valid != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RESULT="${{ steps.run_tests.outputs.result }}"
+          OPS="${{ steps.validate.outputs.valid }}"
+
+          if [ "$RESULT" = "pass" ]; then
+            BODY="✅ Tests generated and **all passed** against the live API. PR opened — ready for review and merge."
+          else
+            BODY="⚠️ Tests generated but some **failed** against the live API. PR opened with the test code — failures may indicate API issues or missing permissions."
+          fi
+
+          BODY="$BODY
+
+          **Operations tested:** $(echo "$OPS" | tr ' ' '\n' | sed 's/^/\`/' | sed 's/$/\`/' | tr '\n' ', ' | sed 's/,$//')"
+
+          gh issue comment ${{ github.event.issue.number }} --body "$BODY"
