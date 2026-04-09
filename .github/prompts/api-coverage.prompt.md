@@ -30,5 +30,6 @@ Generate an API coverage report showing which operations are tested vs untested.
 ## Context
 
 The reporter combines two sources:
+
 - Operations invoked in `tests/integration.smoke.test.ts` (vitest suite)
 - Results from the last `npm run test:api` run stored in `tmp/api-test-results.json`

@@ -43,9 +43,10 @@ jobs:
             exit 0
           fi
 
-          echo "ops<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$OPS" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          # Join into a single space-separated line for reliable shell expansion
+          OPS_LINE=$(echo "$OPS" | tr '\n' ' ' | xargs)
+
+          echo "ops=$OPS_LINE" >> "$GITHUB_OUTPUT"
 
           COUNT=$(echo "$OPS" | wc -l)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -54,19 +55,21 @@ jobs:
         if: steps.parse.outputs.ops != ''
         id: validate
         run: |
-          VALID_OPS=""
-          INVALID_OPS=""
+          mkdir -p tmp
+          node --input-type=module -e "
+          import { getOperationById } from './dist/index.js';
+          const ops = process.argv.slice(1);
+          const valid = [], invalid = [];
+          for (const op of ops) {
+            try { getOperationById(op); valid.push(op); }
+            catch { invalid.push(op); }
+          }
+          console.log('VALID=' + valid.join(' '));
+          console.log('INVALID=' + invalid.join(' '));
+          " ${{ steps.parse.outputs.ops }} > tmp/validate.txt
 
-          for op in ${{ steps.parse.outputs.ops }}; do
-            if node -e "import{getOperationById}from'./dist/index.js';getOperationById('$op')" 2>/dev/null; then
-              VALID_OPS="$VALID_OPS $op"
-            else
-              INVALID_OPS="$INVALID_OPS $op"
-            fi
-          done
-
-          VALID_OPS=$(echo "$VALID_OPS" | xargs)
-          INVALID_OPS=$(echo "$INVALID_OPS" | xargs)
+          VALID_OPS=$(grep '^VALID=' tmp/validate.txt | sed 's/^VALID=//')
+          INVALID_OPS=$(grep '^INVALID=' tmp/validate.txt | sed 's/^INVALID=//')
 
           echo "valid=$VALID_OPS" >> "$GITHUB_OUTPUT"
           echo "invalid=$INVALID_OPS" >> "$GITHUB_OUTPUT"
