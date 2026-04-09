@@ -3,6 +3,8 @@ name: test-request
 on:
   issues:
     types: [labeled]
+  repository_dispatch:
+    types: [run-test-batch]
 
 permissions:
   contents: write
@@ -12,7 +14,9 @@ permissions:
 jobs:
   generate-test:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'test-request'
+    if: >
+      (github.event_name == 'issues' && github.event.label.name == 'test-request') ||
+      github.event_name == 'repository_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -25,30 +29,42 @@ jobs:
 
       - run: npm run build
 
-      - name: Parse issue for operation IDs
+      - name: Determine operation IDs
         id: parse
         env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body || '' }}
+          ISSUE_TITLE: ${{ github.event.issue.title || '' }}
+          DISPATCH_OPS: ${{ github.event.client_payload.ops || '' }}
+          DISPATCH_BATCH: ${{ github.event.client_payload.batch || '' }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Extract operation IDs from issue title and body.
-          # Matches patterns like: services.git.repositories.list, services.core.projects.list
-          ALL_TEXT="$ISSUE_TITLE $ISSUE_BODY"
-          OPS=$(echo "$ALL_TEXT" | grep -oP '(services|server)\.[a-z0-9._-]+\.[a-z0-9._-]+\.[a-z0-9._-]+' | sort -u)
+          mkdir -p tmp
 
-          if [ -z "$OPS" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
-              --body "⚠️ Could not find any operation IDs in this issue. Please include operation IDs like \`services.git.repositories.list\` in the issue body."
-            exit 0
+          if [ -n "$DISPATCH_OPS" ]; then
+            # Triggered by repository_dispatch — ops provided directly
+            OPS_LINE="$DISPATCH_OPS"
+            ISSUE_NUM="dispatch-${DISPATCH_BATCH:-auto}"
+            echo "source=dispatch" >> "$GITHUB_OUTPUT"
+          else
+            # Triggered by issue label — parse from issue body
+            ALL_TEXT="$ISSUE_TITLE $ISSUE_BODY"
+            OPS=$(echo "$ALL_TEXT" | grep -oP '(services|server)\.[a-z0-9._-]+\.[a-z0-9._-]+\.[a-z0-9._-]+' | sort -u)
+
+            if [ -z "$OPS" ]; then
+              gh issue comment ${{ github.event.issue.number }} \
+                --body "⚠️ Could not find any operation IDs in this issue."
+              exit 0
+            fi
+
+            OPS_LINE=$(echo "$OPS" | tr '\n' ' ' | xargs)
+            ISSUE_NUM="${{ github.event.issue.number }}"
+            echo "source=issue" >> "$GITHUB_OUTPUT"
           fi
 
-          # Join into a single space-separated line for reliable shell expansion
-          OPS_LINE=$(echo "$OPS" | tr '\n' ' ' | xargs)
-
           echo "ops=$OPS_LINE" >> "$GITHUB_OUTPUT"
+          echo "issue_num=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
 
-          COUNT=$(echo "$OPS" | wc -l)
+          COUNT=$(echo "$OPS_LINE" | wc -w)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Validate operations exist in catalog
@@ -78,10 +94,7 @@ jobs:
         if: steps.validate.outputs.valid != ''
         id: generate
         run: |
-          BRANCH="test-request/${{ github.event.issue.number }}"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-
-          node scripts/gen-test.mjs ${{ github.event.issue.number }} ${{ steps.validate.outputs.valid }}
+          node scripts/gen-test.mjs ${{ steps.parse.outputs.issue_num }} ${{ steps.validate.outputs.valid }}
 
       - name: Run the generated tests
         if: steps.validate.outputs.valid != ''
@@ -91,7 +104,7 @@ jobs:
           AZDO_PAT: ${{ secrets.AZDO_PAT }}
           AZDO_ORGANIZATION: ${{ secrets.AZDO_ORGANIZATION }}
         run: |
-          npx vitest run "tests/issue-${{ github.event.issue.number }}.test.ts" --reporter=verbose 2>&1 | tee tmp/test-output.txt || true
+          npx vitest run "tests/issue-${{ steps.parse.outputs.issue_num }}.test.ts" --reporter=verbose 2>&1 | tee tmp/test-output.txt || true
           if grep -q "Tests.*passed" tmp/test-output.txt; then
             echo "result=pass" >> "$GITHUB_OUTPUT"
           else
@@ -106,12 +119,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add "tests/issue-${{ github.event.issue.number }}.test.ts"
-          git commit -m "test: add API tests for issue #${{ github.event.issue.number }}"
+          git add "tests/issue-${{ steps.parse.outputs.issue_num }}.test.ts"
+          git commit -m "test: add API tests for batch ${{ steps.parse.outputs.issue_num }}"
           git push origin master
 
       - name: Comment on issue and close
-        if: steps.validate.outputs.valid != ''
+        if: steps.validate.outputs.valid != '' && steps.parse.outputs.source == 'issue'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -131,35 +144,32 @@ jobs:
           gh issue comment ${{ github.event.issue.number }} --body "$BODY"
           gh issue close ${{ github.event.issue.number }}
 
-      - name: File next batch
+      - name: Dispatch next batch
         if: steps.validate.outputs.valid != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Pick next untested operations
-          NEXT_OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null)
-          COUNT=$(echo "$NEXT_OPS" | grep -c '^services\.' || true)
+          NEXT_OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null | tr '\n' ' ' | xargs)
+          COUNT=$(echo "$NEXT_OPS" | wc -w)
 
-          if [ "$COUNT" -eq 0 ]; then
+          if [ "$COUNT" -eq 0 ] || [ -z "$NEXT_OPS" ]; then
             echo "No more untested operations — coverage complete!"
             exit 0
           fi
 
-          OPS_LIST=$(echo "$NEXT_OPS" | sed '/^$/d' | sed 's/^/- `/' | sed 's/$/`/')
-          BATCH=$(gh issue list --label "test-request" --state all --json number --jq 'length + 1')
+          # Increment batch number
+          CURRENT_BATCH="${{ steps.parse.outputs.issue_num }}"
+          if echo "$CURRENT_BATCH" | grep -q '^dispatch-'; then
+            NUM=$(echo "$CURRENT_BATCH" | sed 's/dispatch-//')
+            BATCH=$((NUM + 1))
+          else
+            BATCH=$((CURRENT_BATCH + 1))
+          fi
 
-          gh issue create \
-            --title "Test Request: Batch $BATCH — Auto-Continue ($COUNT ops)" \
-            --body "## Test Request — Batch $BATCH (auto-continued)
-
-          Continuing automated coverage expansion.
-
-          ### Operations to test
-
-          $OPS_LIST
-
-          ### Context
-          - Auto-filed by the test-request workflow after completing issue #${{ github.event.issue.number }}
-          - $COUNT operations selected from least-covered services
-          " \
-            --label "test-request"
+          echo "Dispatching batch $BATCH with $COUNT ops..."
+          gh api repos/${{ github.repository }}/dispatches \
+            --method POST \
+            --field event_type=run-test-batch \
+            -f client_payload[ops]="$NEXT_OPS" \
+            -f client_payload[batch]="$BATCH"
