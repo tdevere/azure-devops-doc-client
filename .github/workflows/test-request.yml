@@ -106,6 +106,10 @@ jobs:
           BRANCH="test-request/${{ github.event.issue.number }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Delete remote branch if it exists from a prior run
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
           git checkout -b "$BRANCH"
           git add "tests/issue-${{ github.event.issue.number }}.test.ts"
           git commit -m "test: add API tests for issue #${{ github.event.issue.number }}"
@@ -116,6 +120,12 @@ jobs:
             STATUS_LINE="✅ All tests passed against the live API."
           else
             STATUS_LINE="⚠️ Some tests failed — see workflow run for details."
+          fi
+
+          # Close any existing PR from a prior run for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING_PR" ]; then
+            gh pr close "$EXISTING_PR" --delete-branch 2>/dev/null || true
           fi
 
           gh pr create \
