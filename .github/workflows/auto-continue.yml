@@ -11,7 +11,7 @@ on:
   workflow_dispatch: # manual trigger for testing
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
@@ -24,8 +24,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Look for any in_progress or queued test-request runs
-          ACTIVE=$(gh run list --workflow test-request --limit 5 \
-            --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+          ACTIVE=$(gh run list --workflow test-request.yml --limit 5 \
+            --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length' 2>/dev/null || echo "0")
 
           echo "active=$ACTIVE" >> "$GITHUB_OUTPUT"
           if [ "$ACTIVE" -gt 0 ]; then
@@ -72,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Determine next batch number from latest dispatch run title
-          LAST=$(gh run list --workflow test-request --limit 1 \
+          LAST=$(gh run list --workflow test-request.yml --limit 1 \
             --json displayTitle --jq '.[0].displayTitle // ""')
           NUM=$(echo "$LAST" | grep -oP 'dispatch-\K\d+' || echo "0")
           BATCH=$((NUM + 1))
