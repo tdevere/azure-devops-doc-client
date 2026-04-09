@@ -21,6 +21,18 @@ if (!issueNumber || operationIds.length === 0) {
 
 const { getOperationById } = await import('../dist/index.js');
 
+// Pre-scan to determine which helpers are needed
+let needsExpectSuccess = false;
+let needsExpectReachable = false;
+for (const opId of operationIds) {
+  try {
+    const op = getOperationById(opId);
+    const method = op.requestTemplates[0]?.method ?? 'GET';
+    if (method === 'GET' || method === 'HEAD') needsExpectSuccess = true;
+    else needsExpectReachable = true;
+  } catch { /* skip */ }
+}
+
 const lines = [];
 
 lines.push(`import { describe, expect, it } from 'vitest';`);
@@ -36,18 +48,22 @@ lines.push(`  if (!client) client = new AzureDevOpsClient(loadAzureDevOpsClientO
 lines.push(`  return client;`);
 lines.push(`}`);
 lines.push(``);
-lines.push(`function expectSuccess(response: AzureDevOpsResponse): void {`);
-lines.push(`  expect(response.status).toBeGreaterThanOrEqual(200);`);
-lines.push(`  expect(response.status).toBeLessThan(300);`);
-lines.push(`}`);
-lines.push(``);
-lines.push(`function expectReachable(response: AzureDevOpsResponse): void {`);
-lines.push(`  // Mutating endpoint reachability: any HTTP response (2xx-4xx) proves the endpoint exists`);
-lines.push(`  // Only 5xx or network errors indicate a real problem`);
-lines.push(`  expect(response.status).toBeGreaterThanOrEqual(200);`);
-lines.push(`  expect(response.status).toBeLessThan(500);`);
-lines.push(`}`);
-lines.push(``);
+if (needsExpectSuccess) {
+  lines.push(`function expectSuccess(response: AzureDevOpsResponse): void {`);
+  lines.push(`  expect(response.status).toBeGreaterThanOrEqual(200);`);
+  lines.push(`  expect(response.status).toBeLessThan(300);`);
+  lines.push(`}`);
+  lines.push(``);
+}
+if (needsExpectReachable) {
+  lines.push(`function expectReachable(response: AzureDevOpsResponse): void {`);
+  lines.push(`  // Mutating endpoint reachability: any HTTP response (2xx-4xx) proves the endpoint exists`);
+  lines.push(`  // Only 5xx or network errors indicate a real problem`);
+  lines.push(`  expect(response.status).toBeGreaterThanOrEqual(200);`);
+  lines.push(`  expect(response.status).toBeLessThan(500);`);
+  lines.push(`}`);
+  lines.push(``);
+}
 lines.push(`// Tests requested in issue #${issueNumber}`);
 lines.push(`testBlock('issue #${issueNumber}: requested API tests', () => {`);
 

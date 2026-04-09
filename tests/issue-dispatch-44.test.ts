@@ -11,11 +11,6 @@ function getClient(): AzureDevOpsClient {
   return client;
 }
 
-function expectSuccess(response: AzureDevOpsResponse): void {
-  expect(response.status).toBeGreaterThanOrEqual(200);
-  expect(response.status).toBeLessThan(300);
-}
-
 function expectReachable(response: AzureDevOpsResponse): void {
   // Mutating endpoint reachability: any HTTP response (2xx-4xx) proves the endpoint exists
   // Only 5xx or network errors indicate a real problem
