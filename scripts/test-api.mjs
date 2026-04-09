@@ -190,11 +190,34 @@ function buildPathDefaults(op) {
   return path;
 }
 
+// Load known failures — documented ops are skipped rather than counted as failures
+let knownFailures = {};
+try {
+  const knownRaw = await import('node:fs').then(fs =>
+    fs.readFileSync(new URL('../src/known-failures.json', import.meta.url), 'utf-8'),
+  );
+  knownFailures = JSON.parse(knownRaw);
+} catch {
+  // No known-failures file — treat everything as new
+}
+
 // Results accumulator
 const results = [];
 
 /** Test a single operation. Returns a result object. */
 async function testOperation(op) {
+  // Skip ops with documented failures (needs-resource-id, server-error, etc.)
+  const knownEntry = knownFailures[op.id];
+  if (knownEntry && knownEntry.reason !== 'unexpected') {
+    return {
+      id: op.id,
+      status: 'documented-skip',
+      detail: `Known: ${knownEntry.reason} — ${knownEntry.detail}`,
+      preview: op.isPreview,
+      durationMs: 0,
+    };
+  }
+
   const startMs = Date.now();
   const path = buildPathDefaults(op);
 
@@ -286,6 +309,7 @@ const auth = results.filter((r) => r.status === 'auth');
 const notFound = results.filter((r) => r.status === 'not-found');
 const skip = results.filter((r) => r.status === 'skip');
 const serverError = results.filter((r) => r.status === 'server-error');
+const docSkip = results.filter((r) => r.status === 'documented-skip');
 
 if (jsonOutput) {
   const summary = {
@@ -296,6 +320,7 @@ if (jsonOutput) {
     auth: auth.length,
     notFound: notFound.length,
     skip: skip.length,
+    documentedSkip: docSkip.length,
     serverError: serverError.length,
     results,
   };
@@ -310,7 +335,8 @@ if (jsonOutput) {
   console.log(`│  🔒 Auth      : ${String(auth.length).padStart(6)}               │`);
   console.log(`│  🔍 Not Found : ${String(notFound.length).padStart(6)}               │`);
   console.log(`│  ⏭️  Skipped   : ${String(skip.length).padStart(6)}               │`);
-  console.log(`│  💥 Server Err: ${String(serverError.length).padStart(6)}               │`);
+  console.log(`│  � Documented: ${String(docSkip.length).padStart(6)}               │`);
+  console.log(`│  �💥 Server Err: ${String(serverError.length).padStart(6)}               │`);
   console.log('└──────────────────────────────────────┘');
 
   if (fail.length > 0) {
@@ -346,6 +372,7 @@ writeFileSync(
       auth: auth.length,
       notFound: notFound.length,
       skip: skip.length,
+      documentedSkip: docSkip.length,
       serverError: serverError.length,
       results,
     },

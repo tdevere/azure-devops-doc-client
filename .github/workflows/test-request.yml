@@ -149,6 +149,9 @@ jobs:
             --label "automated" \
             --head "$BRANCH"
 
+          # Auto-merge after CI passes — only npm publish is gatekept
+          gh pr merge "$BRANCH" --auto --squash
+
       - name: Comment on issue
         if: steps.validate.outputs.valid != ''
         env:

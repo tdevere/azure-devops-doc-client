@@ -1,0 +1,74 @@
+name: auto-continue
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  next-batch:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'automated')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Check if there are untested operations
+        id: check
+        run: |
+          OPS=$(node scripts/pick-next-batch.mjs 20 2>/dev/null)
+          COUNT=$(echo "$OPS" | grep -c '^services\.' || true)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "remaining=0" >> "$GITHUB_OUTPUT"
+            echo "No more untested operations — full coverage achieved!"
+          else
+            echo "remaining=$COUNT" >> "$GITHUB_OUTPUT"
+            # Save for the next step
+            echo "$OPS" | tr '\n' ' ' | xargs > tmp/next-ops.txt
+          fi
+
+      - name: File next test-request issue
+        if: steps.check.outputs.remaining != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OPS=$(cat tmp/next-ops.txt)
+          COUNT=${{ steps.check.outputs.remaining }}
+
+          # Build the ops list for the issue body
+          OPS_LIST=$(echo "$OPS" | tr ' ' '\n' | sed '/^$/d' | sed 's/^/- `/' | sed 's/$/`/')
+
+          # Determine batch number from existing test-request issues
+          BATCH=$(gh issue list --label "test-request" --state all --json number --jq 'length + 1')
+
+          BODY="## Test Request — Batch $BATCH (auto-continued)
+
+          Continuing automated coverage expansion after merging PR #${{ github.event.pull_request.number }}.
+
+          ### Operations to test
+
+          $OPS_LIST
+
+          ### Context
+          - Auto-filed by the auto-continue workflow
+          - $COUNT operations selected from least-covered services
+          "
+
+          gh issue create \
+            --title "Test Request: Batch $BATCH — Auto-Continue ($COUNT ops)" \
+            --body "$BODY" \
+            --label "test-request"

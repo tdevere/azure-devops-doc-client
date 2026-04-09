@@ -1,77 +1,106 @@
 #!/usr/bin/env node
-// Pick the next batch of untested GET operations for a test-request issue.
-// Usage: node scripts/pick-next-batch.mjs [count]
 
+/**
+ * Pick the next batch of untested GET operations for a test-request issue.
+ *
+ * Dynamically discovers what's already tested by scanning:
+ *   - tests/issue-*.test.ts files for operation IDs
+ *   - tests/integration.smoke.test.ts for operation IDs
+ *   - tmp/api-test-results.json for pass/documented-skip results
+ *   - src/known-failures.json for documented failures
+ *
+ * Usage:
+ *   node scripts/pick-next-batch.mjs [count]      # default 20
+ *   node scripts/pick-next-batch.mjs --json        # output as JSON array
+ */
+
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { listOperations } from '../dist/index.js';
 
-const count = parseInt(process.argv[2] || '20', 10);
+const args = process.argv.slice(2);
+const jsonMode = args.includes('--json');
+const count = parseInt(args.find(a => /^\d+$/.test(a)) || '20', 10);
+
 const ops = listOperations('services');
 
-// Already tested (from PR #3, smoke tests, etc.)
-const tested = new Set([
-  'services.core.projects.list','services.core.projects.get','services.core.teams.get-teams',
-  'services.core.teams.get-all-teams','services.core.processes.list','services.core.project-properties.get',
-  'services.git.repositories.list','services.git.refs.list','services.git.commits.get-commits',
-  'services.git.pull-requests.get-pull-requests-by-project','services.git.items.get',
-  'services.git.stats.get','services.git.pushes.get-pushes','services.git.repositories.get-repository',
-  'services.build.builds.list','services.build.builds.get','services.build.definitions.list',
-  'services.build.artifacts.list','services.build.builds.get-build-log','services.build.timeline.get',
-  'services.build.options.list','services.build.latest.get-latest-build','services.build.settings.get',
-  'services.build.general-settings.get','services.build.controllers.list','services.build.definitions.get-definition',
-  'services.pipelines.pipelines.list','services.pipelines.runs.list',
-  'services.release.definitions.list','services.release.releases.list',
-  'services.release.releases.get-release','services.release.approvals.get-approvals',
-  'services.work-item-tracking.wiql.query-by-wiql','services.work-item-tracking.work-items.get-work-item',
-  'services.work-item-tracking.fields.list','services.work-item-tracking.queries.list',
-  'services.work-item-tracking.classification-nodes.get-root-nodes',
-  'services.work-item-tracking.tags.list','services.work-item-tracking.work-item-types.list',
-  'services.work-item-tracking.recycle-bin.get-deleted-work-items',
-  'services.test.runs.list','services.wiki.wikis.list',
-  'services.distributed-task.queues.get-agent-queues','services.distributed-task.pools.get-agent-pools',
-  'services.distributed-task.agents.list','services.distributed-task.deploymentgroups.list',
-  'services.distributed-task.variablegroups.get-variable-groups',
-  'services.artifacts.feed-management.get-feeds','services.policy.configurations.list',
-  'services.policy.types.list',
-  'services.audit.audit-log.query','services.audit.actions.list',
-  'services.graph.users.list','services.graph.groups.list','services.graph.memberships.list',
-  'services.member-entitlement-management.user-entitlements.search-user-entitlements',
-  'services.service-hooks.subscriptions.list','services.service-hooks.publishers.list',
-  'services.service-hooks.consumers.list',
-  'services.tfvc.changesets.get-changesets','services.tfvc.items.list','services.tfvc.labels.list',
-]);
+// ---------------------------------------------------------------------------
+// Build the "already covered" set dynamically
+// ---------------------------------------------------------------------------
+const covered = new Set();
 
-// Priority: 0% services first, then large-gap services
-const zeroPriority = new Set([
-  'artifacts-package-types','notification','dashboard','security',
-  'security-roles','tokens','accounts','identities','operations','profile','status',
-  'work-item-tracking-process-template','token-admin',
-]);
-const expandPriority = new Set([
-  'git','build','work-item-tracking','distributed-task','test-results',
-  'work','test-plan','artifacts','release','graph','test',
-  'member-entitlement-management','service-endpoint','search',
-  'wiki','approvals-and-checks','symbol','favorite','extension-management',
-  'permissions-report','core','pipelines',
-]);
+// 1. Scan test files for operation IDs
+const opIdRe = /(services|server)\.[a-z0-9._-]+\.[a-z0-9._-]+\.[a-z0-9._-]+/gi;
 
+try {
+  const testFiles = readdirSync('tests').filter(f => f.endsWith('.test.ts'));
+  for (const f of testFiles) {
+    const content = readFileSync(`tests/${f}`, 'utf-8');
+    let m;
+    while ((m = opIdRe.exec(content)) !== null) covered.add(m[0]);
+  }
+} catch { /* no tests dir */ }
+
+// 2. Read runner results (pass = tested, documented-skip = known)
+if (existsSync('tmp/api-test-results.json')) {
+  try {
+    const results = JSON.parse(readFileSync('tmp/api-test-results.json', 'utf-8'));
+    for (const r of results.results || []) {
+      if (r.status === 'pass' || r.status === 'documented-skip') covered.add(r.id);
+    }
+  } catch { /* corrupt file */ }
+}
+
+// 3. Read known-failures (documented, don't re-test)
+if (existsSync('src/known-failures.json')) {
+  try {
+    const known = JSON.parse(readFileSync('src/known-failures.json', 'utf-8'));
+    for (const id of Object.keys(known)) covered.add(id);
+  } catch { /* bad json */ }
+}
+
+// ---------------------------------------------------------------------------
+// Build per-service coverage stats for prioritization
+// ---------------------------------------------------------------------------
+const svcStats = {};
+for (const op of ops) {
+  const svc = op.serviceKey;
+  if (!svcStats[svc]) svcStats[svc] = { total: 0, covered: 0 };
+  svcStats[svc].total++;
+  if (covered.has(op.id)) svcStats[svc].covered++;
+}
+
+// Sort services by coverage % ascending (prioritize least-covered)
+const svcPriority = Object.entries(svcStats)
+  .map(([svc, s]) => ({ svc, pct: s.total > 0 ? s.covered / s.total : 1 }))
+  .sort((a, b) => a.pct - b.pct)
+  .map(s => s.svc);
+
+// ---------------------------------------------------------------------------
+// Pick operations: lowest-coverage services first, GET only
+// ---------------------------------------------------------------------------
 const picks = [];
 
-// Pass 1: 0% services
-for (const op of ops) {
+for (const svc of svcPriority) {
   if (picks.length >= count) break;
-  if (tested.has(op.id)) continue;
-  const isGet = op.requestTemplates?.some(t => t.method === 'GET');
-  if (!isGet) continue;
-  if (zeroPriority.has(op.serviceKey)) picks.push(op.id);
+  for (const op of ops) {
+    if (picks.length >= count) break;
+    if (op.serviceKey !== svc) continue;
+    if (covered.has(op.id)) continue;
+    const isGet = op.requestTemplates?.some(t => t.method === 'GET');
+    if (!isGet) continue;
+    picks.push(op.id);
+  }
 }
 
-// Pass 2: expand coverage in large services
-for (const op of ops) {
-  if (picks.length >= count) break;
-  if (tested.has(op.id) || picks.includes(op.id)) continue;
-  const isGet = op.requestTemplates?.some(t => t.method === 'GET');
-  if (!isGet) continue;
-  if (expandPriority.has(op.serviceKey)) picks.push(op.id);
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+if (jsonMode) {
+  console.log(JSON.stringify(picks));
+} else {
+  picks.forEach(p => console.log(p));
 }
 
-picks.forEach(p => console.log(p));
+if (!jsonMode) {
+  console.error(`\nPicked ${picks.length} ops (${covered.size} already covered out of ${ops.length} total)`);
+}
